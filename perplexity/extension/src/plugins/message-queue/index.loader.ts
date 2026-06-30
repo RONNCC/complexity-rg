@@ -144,6 +144,7 @@ export default function () {
       if (!pluginsEnableStates["messageQueue"]) return;
 
       let isProcessing = false;
+      let sessionToken = {};
 
       // Hydrate queue from sessionStorage for the current thread on load.
       messageQueueStore
@@ -172,15 +173,17 @@ export default function () {
         if (isProcessing) return;
         if (messageQueueStore.getState().queue.length === 0) return;
         isProcessing = true;
+        const token = sessionToken;
         try {
           await sleep(150);
+          if (token !== sessionToken) return;
           const followUp =
             queryBoxesDomObserverStore.getState().textbox.followUp;
           if (!followUp) return;
           const next = messageQueueStore.getState().shiftQueue();
           if (!next) return;
           const ok = await autoSubmit(followUp, next.message);
-          if (!ok) {
+          if (!ok && token === sessionToken) {
             messageQueueStore
               .getState()
               .hydrateQueue([next, ...messageQueueStore.getState().queue]);
@@ -201,6 +204,7 @@ export default function () {
 
       // On SPA navigation to a different thread, swap the queue to match.
       window.addEventListener(spaRouterRouteChangeEvent, () => {
+        sessionToken = {};
         isProcessing = false;
         messageQueueStore
           .getState()
