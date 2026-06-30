@@ -38,19 +38,26 @@ export function registerHashRouterRoute(params: {
 function HashRouter() {
   const routes = useStore(hashRouterRoutesRegistry, (state) => state.routes);
 
-  const router = createHashRouterReactRouterDom([
-    {
-      path: "/",
-      element: null,
-      children: Array.from(routes.values()),
-      errorElement: null,
-    },
-    {
-      path: "*",
-      element: null,
-      errorElement: null,
-    },
-  ]);
+  const router = useMemo(
+    () =>
+      createHashRouterReactRouterDom([
+        {
+          path: "/",
+          element: null,
+          // Suppress "No HydrateFallback element provided" warning thrown by
+          // React Router v7 while route loaders are pending on initial render.
+          HydrateFallback: () => null,
+          children: Array.from(routes.values()),
+          errorElement: null,
+        },
+        {
+          path: "*",
+          element: null,
+          errorElement: null,
+        },
+      ]),
+    [routes],
+  );
 
   return <RouterProvider router={router} />;
 }
