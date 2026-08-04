@@ -5,37 +5,24 @@ import {
   messageQueueStore,
   useMessageQueueStore,
 } from "@/plugins/message-queue/store";
+import {
+  clearTextbox,
+  getTextboxContent,
+} from "@/plugins/message-queue/textbox";
 import useQueueDisplayPortalContainer from "@/plugins/message-queue/useQueueDisplayPortalContainer";
-import { getTextContent } from "@/utils/dom-utils/lexical-utils";
-import { setLexicalEditorContent } from "@/utils/wrappers/lexical";
 
 import TablerPlus from "~icons/tabler/plus";
-
-function getTextboxContent(textbox: HTMLElement): string {
-  if (textbox.contentEditable === "true") {
-    return getTextContent({ element: textbox, omitDecorators: true });
-  }
-  return (textbox as HTMLTextAreaElement).value;
-}
-
-function clearTextbox(textbox: HTMLElement) {
-  if ("__lexicalEditor" in textbox) {
-    setLexicalEditorContent({ content: "", activeTextbox: textbox });
-  } else {
-    const nativeValueSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLTextAreaElement.prototype,
-      "value",
-    )?.set;
-    nativeValueSetter?.call(textbox, "");
-    textbox.dispatchEvent(new Event("input", { bubbles: true }));
-  }
-}
 
 export function QueueDisplay() {
   const queue = useMessageQueueStore((s) => s.queue);
   const container = useQueueDisplayPortalContainer();
 
   const isInFlight = useThreadDomObserverStore((s) => s.states.isInFlight);
+
+  // The clear is deferred (see clearTextbox), so a rapid double-click before
+  // it runs would otherwise re-read the still-uncleared textbox and queue a
+  // duplicate.
+  const clearPendingRef = useRef(false);
 
   if (!container) return null;
   if (!isInFlight && queue.length === 0) return null;
@@ -71,13 +58,17 @@ export function QueueDisplay() {
               title="Add to queue"
               className="x:flex x:cursor-pointer x:items-center x:gap-1 x:rounded-md x:px-2 x:py-0.5 x:text-xs x:text-muted-foreground x:transition-all x:duration-150 x:outline-none x:hover:bg-foreground-subtle x:hover:text-foreground x:focus-visible:bg-foreground-subtle x:focus-visible:outline-none x:active:scale-95"
               onClick={() => {
+                if (clearPendingRef.current) return;
                 const followUp =
                   queryBoxesDomObserverStore.getState().textbox.followUp;
                 if (!followUp) return;
                 const content = getTextboxContent(followUp).trim();
                 if (!content) return;
                 messageQueueStore.getState().addToQueue(content);
-                clearTextbox(followUp);
+                clearPendingRef.current = true;
+                clearTextbox(followUp, () => {
+                  clearPendingRef.current = false;
+                });
               }}
             >
               <TablerPlus className="x:size-3" />

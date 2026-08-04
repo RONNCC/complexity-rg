@@ -1,6 +1,6 @@
 import { queryBoxesDomObserverStore } from "@/entrypoints/contexts/content-scripts/core-plugins/dom-observers/query-boxes/store";
 import { threadDomObserverStore } from "@/entrypoints/contexts/content-scripts/core-plugins/dom-observers/thread/store";
-import { spaRouterRouteChangeEvent } from "@/entrypoints/contexts/content-scripts/core-plugins/spa-router/listeners.loader";
+import { spaRouteChangeCompleteSubscribe } from "@/entrypoints/contexts/content-scripts/core-plugins/spa-router/utils";
 import { AsyncLoaderRegistry } from "@/entrypoints/contexts/content-scripts/services/async-loaders";
 import { DomSelectorsService } from "@/entrypoints/contexts/content-scripts/services/dom-selectors/service-init.loader";
 import { isLexical } from "@/entrypoints/contexts/content-scripts/ui-groups/elements/query-box/utils";
@@ -8,8 +8,10 @@ import {
   messageQueueStore,
   type MessageQueueItem,
 } from "@/plugins/message-queue/store";
-import { getTextContent } from "@/utils/dom-utils/lexical-utils";
-import { setLexicalEditorContent } from "@/utils/wrappers/lexical";
+import {
+  clearTextbox,
+  getTextboxContent,
+} from "@/plugins/message-queue/textbox";
 
 const STORAGE_PREFIX = "cplx-mq:";
 
@@ -40,26 +42,6 @@ function isTypeaheadMenuPresent() {
   return (
     $(DomSelectorsService.Root.cachedSync.QUERY_BOX.TYPEAHEAD_MENU).length > 0
   );
-}
-
-function getTextboxContent(textbox: HTMLElement): string {
-  if (isLexical(textbox)) {
-    return getTextContent({ element: textbox, omitDecorators: true });
-  }
-  return (textbox as HTMLTextAreaElement).value;
-}
-
-function clearTextbox(textbox: HTMLElement) {
-  if ("__lexicalEditor" in textbox) {
-    setLexicalEditorContent({ content: "", activeTextbox: textbox });
-  } else {
-    const nativeValueSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLTextAreaElement.prototype,
-      "value",
-    )?.set;
-    nativeValueSetter?.call(textbox, "");
-    textbox.dispatchEvent(new Event("input", { bubbles: true }));
-  }
 }
 
 function fillTextbox(textbox: HTMLElement, content: string) {
@@ -107,11 +89,17 @@ function interceptFollowUpTextbox(textbox: HTMLElement) {
   if ($textbox.attr(INTERCEPT_ATTR)) return;
   $textbox.attr(INTERCEPT_ATTR, "true");
 
+  // The clear is deferred (see clearTextbox), so a rapid second Enter fired
+  // before it runs would otherwise re-read the still-uncleared textbox and
+  // queue a duplicate.
+  let clearPending = false;
+
   const handler = (e: KeyboardEvent) => {
     if (e.key !== "Enter") return;
     if (e.isComposing) return;
     if (e.shiftKey || isTypeaheadMenuPresent()) return;
     if (!threadDomObserverStore.getState().states.isInFlight) return;
+    if (clearPending) return;
 
     const content = getTextboxContent(textbox).trim();
     if (!content) return;
@@ -120,7 +108,10 @@ function interceptFollowUpTextbox(textbox: HTMLElement) {
     e.preventDefault();
 
     messageQueueStore.getState().addToQueue(content);
-    clearTextbox(textbox);
+    clearPending = true;
+    clearTextbox(textbox, () => {
+      clearPending = false;
+    });
   };
 
   textbox.addEventListener("keydown", handler, true);
@@ -167,6 +158,11 @@ export default function () {
         (followUp) => {
           if (followUp) interceptFollowUpTextbox(followUp);
         },
+        // The follow-up box may already be populated by the time this loader
+        // runs (no ordering dependency guarantees otherwise), and a plain
+        // subscribe() only fires on future changes — without this, Enter-to-
+        // queue would silently never attach until the node gets replaced.
+        { fireImmediately: true },
       );
 
       async function processNextInQueue() {
@@ -187,9 +183,20 @@ export default function () {
             messageQueueStore
               .getState()
               .hydrateQueue([next, ...messageQueueStore.getState().queue]);
+            // Nothing else re-triggers processing on its own after a failed
+            // submit (the next trigger is normally an isInFlight toggle or a
+            // nav), so the message would otherwise sit queued forever.
+            setTimeout(() => {
+              if (token === sessionToken) void processNextInQueue();
+            }, 1000);
           }
         } finally {
-          isProcessing = false;
+          // A stale call aborted by a SPA nav (token !== sessionToken) must
+          // not clear the flag out from under a fresh call for the new
+          // thread that may already be running.
+          if (token === sessionToken) {
+            isProcessing = false;
+          }
         }
       }
 
@@ -203,7 +210,10 @@ export default function () {
       );
 
       // On SPA navigation to a different thread, swap the queue to match.
-      window.addEventListener(spaRouterRouteChangeEvent, () => {
+      // Only react once the nav has actually settled ("complete") — reacting
+      // to "pending" too meant this fired twice per nav, with the DOM
+      // possibly not reflecting the new thread yet on the first firing.
+      spaRouteChangeCompleteSubscribe(() => {
         sessionToken = {};
         isProcessing = false;
         messageQueueStore

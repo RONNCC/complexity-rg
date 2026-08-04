@@ -2,15 +2,25 @@ import { DomSelectorsService } from "@/entrypoints/contexts/content-scripts/serv
 import { domObserverService } from "@/services/features/dom-observer";
 import { createDomObserverId } from "@/services/features/dom-observer/types";
 
-const OBSERVER_ID = createDomObserverId("misc", "messageQueue:queueDisplay");
 const CONTAINER_ATTR = "data-cplx-message-queue-container";
 
 export default function useQueueDisplayPortalContainer() {
   const [container, setContainer] = useState<HTMLElement | null>(null);
+  // A fresh id per mount, not a shared module-level constant: the dom
+  // observer service never clears its per-element "already handled" flag on
+  // unsubscribe, so remounting (e.g. toggling this plugin off/on) with a
+  // reused id on a follow-up box that's still in the DOM would silently
+  // never call onAdd again, leaving the queue UI gone until a full nav.
+  const [observerId] = useState(() =>
+    createDomObserverId(
+      "misc",
+      `messageQueue:queueDisplay:${crypto.randomUUID()}`,
+    ),
+  );
 
   useEffect(() => {
     domObserverService.subscribe({
-      id: OBSERVER_ID,
+      id: observerId,
       // Subscribe to the follow-up query box itself, then inject a sibling
       // div before it so we don't disturb the nth-child selectors inside
       // ATTR_WRAPPER that other toolbar plugins rely on.
@@ -38,9 +48,9 @@ export default function useQueueDisplayPortalContainer() {
     });
 
     return () => {
-      domObserverService.unsubscribe(OBSERVER_ID);
+      domObserverService.unsubscribe(observerId);
     };
-  }, []);
+  }, [observerId]);
 
   return container;
 }
