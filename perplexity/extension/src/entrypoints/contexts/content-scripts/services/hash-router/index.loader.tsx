@@ -53,6 +53,7 @@ function HashRouter() {
         {
           path: "*",
           element: null,
+          HydrateFallback: () => null,
           errorElement: null,
         },
       ]),

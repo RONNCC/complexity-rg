@@ -14,7 +14,7 @@ let proxyServiceInstance: LocalThemesServiceType | undefined;
 const [registerService, getService] = defineProxy(getLocalThemesRootService, {
   namespace: backgroundProxyServiceName,
   backup: false,
-  heartbeatCheck: true,
+  heartbeatCheck: false,
 });
 
 function getLocalThemesRootService(): LocalThemesServiceType {

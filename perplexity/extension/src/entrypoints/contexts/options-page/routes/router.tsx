@@ -42,6 +42,7 @@ const { Onboarding } = lazily(
 export const router: ReturnType<typeof createHashRouter> = createHashRouter([
   {
     path: "/",
+    HydrateFallback: () => null,
     children: [
       {
         element: (
