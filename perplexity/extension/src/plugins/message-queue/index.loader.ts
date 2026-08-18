@@ -12,6 +12,7 @@ import {
   clearTextbox,
   getTextboxContent,
 } from "@/plugins/message-queue/textbox";
+import { setLexicalEditorContent } from "@/utils/wrappers/lexical";
 
 const STORAGE_PREFIX = "cplx-mq:";
 
@@ -46,11 +47,13 @@ function isTypeaheadMenuPresent() {
 
 function fillTextbox(textbox: HTMLElement, content: string) {
   if (isLexical(textbox)) {
-    // selectAll + insertText goes through Lexical's beforeinput pipeline,
-    // which updates React state and enables the submit button.
-    textbox.focus();
-    document.execCommand("selectAll", false);
-    document.execCommand("insertText", false, content);
+    // execCommand("insertText") only mutates the DOM; it doesn't reliably
+    // sync Lexical's own model, so the app's "is submit enabled" state
+    // (derived from the Lexical editor, not raw DOM text) can stay stuck
+    // disabled even once the text visually matches. setLexicalEditorContent
+    // writes through the editor's own API instead, same as clearTextbox.
+    setLexicalEditorContent({ content, activeTextbox: textbox });
+    textbox.dispatchEvent(new Event("input", { bubbles: true }));
   } else {
     const nativeValueSetter = Object.getOwnPropertyDescriptor(
       window.HTMLTextAreaElement.prototype,
